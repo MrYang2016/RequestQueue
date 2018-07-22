@@ -1,7 +1,7 @@
 ## 请求队列
 > 当前端请求多个不同接口时，如果各个请求有相关联，执行时需要先后顺序，这时需要同步请求。而浏览器端的请求一般为异步请求，这时你可以将下一个请求放在上一个请求的回调函数中，即第一个请求成功后再执行第二个请求。但这样做会导致需要嵌套多层函数，使代码不美观。而且也不够灵活，比如两个请求间有其它操作。所以这时可以使用请求队列。
 
-### github地址：
+### [github地址](https://github.com/MrYang2016/RequestQueue)
  
 ### 一、队列
 队列是一种线性表，特性是先进先出，即先放进队列中的值，取的时候先出来，并删除。
@@ -27,10 +27,12 @@ enqueue(fun, ...params) {
 	const timetamp = new Date().getTime();
 	// 事件通知，请求完成后，可以使用这个来通知
 	const event = new Event();
+    // 发生错误时触发事
+    const errorEvent = new Event();
 	// 将请求的相关信息放入requires数组中，等待请求
-	this.requires.push({ timetamp, fun, params, event });
+	this.requires.push({ timetamp, fun, params, event, errorEvent });
 	// 如果请求未开始，则开始请求
-	if (this.currentRun === null) {
+	if (this.currentRun === null && !this.paused) {
 	 this.run();
 	}
 	// 返回的操作
@@ -39,9 +41,22 @@ enqueue(fun, ...params) {
 	 timetamp,
 	 // 订阅请求结果，这里主要是利用event，实现请求成功后执行对应的函数
 	 subscribe: fun => {
-	   event.subscribe(fun);
+	   if (fun instanceof Function) {
+        event.subscribe(fun);
+       }
 	   return resultObj;
 	 },
+	 // 取消订阅
+	 unSubscribe: fun => {
+        event.unSubscribe(fun);
+        return resultObj;
+      },
+      // 错误监听
+      onError: fun => {
+        errorEvent.subscribe(fun);
+        return resultObj;
+      },
+
 	 // 删除请求
 	 dequeue: () => {
 	   this.dequeue(timetamp);
@@ -63,6 +78,10 @@ class Event {
       fun(...params);
     });
   }
+  // 取消订阅
+  unSubscribe(fun) {
+    this.eventFun = this.eventFun.filter(f => f !== fun);
+  }
   // 订阅
   subscribe(fun) {
     this.eventFun.push(fun);
@@ -73,21 +92,34 @@ class Event {
 ```
 run() {
     if (this.requires.length === 0) return;
-    // 从队列中取出第一个请求并删除，这样实现先进先出
+    this.paused = false;
     this.currentRun = this.requires.shift();
-    // 执行请求
-    const { fun, params = [], event } = this.currentRun;
-    // 默认请求为promise
+    const { fun, params = [], event, errorEvent } = this.currentRun;
+    let isOverRun = false;
+    // 请求超时处理
+    this.timeout = setTimeout(() => {
+      isOverRun = true;
+      runNext.call(this);
+    }, this.overTime);
+    // 开始请求
     fun(...params).then((...result) => {
-    	// 请求成功后，自动执行下一个请求
-      if (this.requires.length > 0) {
+      if (isOverRun) return;
+      runNext.call(this);
+      event.publish(...result);
+    }).catch(err => {
+      errorEvent.publish(err);
+    });
+    function runNext() {
+      if (this.timeout) {
+        clearTimeout(this.timeout);
+        this.timeout = null;
+      }
+      if (this.requires.length > 0 && !this.paused) {
         this.run();
       } else {
         this.currentRun = null;
       }
-      // 请求成功后触发相应的成功事件
-      event.publish(...result);
-    });
+    }
 }
 ```
 删除队列中的请求操作。如
@@ -101,6 +133,12 @@ dequeue(timetamp) {
       }
     }
     return this;
+}
+```
+清除队列所有请求。如
+```
+clear() {
+    this.requires = [];
 }
 ```
 ### 四、测试

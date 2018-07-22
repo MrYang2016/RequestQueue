@@ -10,5 +10,8 @@ class Event {
   subscribe(fun) {
     this.eventFun.push(fun);
   }
+  unSubscribe(fun) {
+    this.eventFun = this.eventFun.filter(f => f !== fun);
+  }
 }
 module.exports = Event;
